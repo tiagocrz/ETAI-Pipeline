@@ -1,14 +1,18 @@
 # Baseline Predictive Pipeline -- ETAI
 
-This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
+This repository contains the codebase and implementation developed in class for the Exploratory Topics in Artifitial Intelligence course that is part of the MDSAA @NOVAIMS
 
 The task: predict two-year recidivism using ProPublica's COMPAS
 dataset -- the data behind a real 2016 investigation into a risk-
-assessment algorithm actually used by US courts to help inform bail and sentencing decisions. See `data/README.md` for the full problem description and a complete data dictionary before you start.
+assessment algorithm actually used by US courts to help inform bail and sentencing decisions. See `data/README.md` for the full problem description and a complete data dictionary.
 
-It has some **deliberately weak spots**. Part of your work this
-semester is finding them and making them better -- see the pipeline progress table below, which tracks what changes and why as the weeks
-go on.
+| Field | Details |
+| :--- | :--- |
+| **Author** | Tiago da Cruz |
+| **Student ID** | 20231682 |
+| **Institution** | NOVA IMS |
+| **Program** | Master's in Data Science and Advanced Analytics with a specialization in Artificial Intelligence and Computational Systems |
+| **Curricular Unit** | Exploratory Topics in Artificial Intelligence (ETAI) |
 
 ## Project structure
 
