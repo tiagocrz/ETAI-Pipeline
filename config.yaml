@@ -10,18 +10,27 @@ data:
 split:
   test_size: 0.2
   random_state: 42
-#
+
 #model:
-#  type: "logistic_regression"   # or "decision_tree"
+#  type: "logistic_regression"   
 #  params:
-#    max_iter: 1000
+#    max_iter: 5000
+#    solver: "liblinear" # Good for small datasets, can only handle binary classification (https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html)
+
 
 model:
-  type: "decision_tree"   # or "decision_tree"
+  type: "logistic_regression"   
   params:
-    criterion: "gini"
-    splitter: "best"
-    max_depth: 4
+    max_iter: 5000
+    solver: "newton-cholesky" 
+
+
+#model:
+#  type: "decision_tree"   
+#  params:
+#    criterion: "gini"
+#    splitter: "best"
+#    max_depth: 5
 
 
 output:

@@ -14,6 +14,25 @@ assessment algorithm actually used by US courts to help inform bail and sentenci
 | **Program** | Master's in Data Science and Advanced Analytics with a specialization in Artificial Intelligence and Computational Systems |
 | **Curricular Unit** | Exploratory Topics in Artificial Intelligence (ETAI) |
 
+
+## Weekly Results
+### Week 02:
+**Current best model:**
+Logistic Regression <br>
+**Parameters**:<br>
+  *max_iter*: 5000<br>
+  *solver*: "liblinear"<br>
+
+This model achieves better accuracy than a Decision Tree; The DT has a tendency to overfit, even when defining a max_depth of 5.
+The max_iter parameter was increased to 5000, as with 1000 the model was not converging.<br>
+This version also has better accuracy than a LR with the default solver, and with the newton-cholesky solver. The reason for this I do not yet know.
+<br>
+
+**Results:**<br>
+Train accuracy: 0.679<br>
+Test accuracy:  0.681
+
+
 ## Project structure
 
 ```
