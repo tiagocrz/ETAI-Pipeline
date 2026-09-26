@@ -32,6 +32,35 @@ This version also has better accuracy than a LR with the default solver, and wit
 Train accuracy: 0.679<br>
 Test accuracy:  0.681
 
+### Week 03:
+**Current best model:**
+Decision Tree[cite: 13]
+**Parameters:**
+  *criterion*: "gini"[cite: 13]
+  *splitter*: "best"[cite: 13]
+  *max_depth*: 5[cite: 13]
+  *imputer*: KNNImputer(n_neighbors=5)[cite: 13]
+
+#### Results Comparison
+
+| Pipeline Configuration | Model | Imputation Strategy | Train Acc | Test Acc | Gap | Macro F1 | FPR (Afr-Am / Cauc) |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Week 2 (Naive Baseline)** | Logistic Regression | Drop NA (Complete Case) | 0.679 | 0.681 | -0.002 | — | —[cite: 9] |
+| **Week 3 (Class Standard)** | Logistic Regression | Median / Mode | 0.675 | 0.658 | +0.018 | 0.64 | 0.28 / 0.14[cite: 10] |
+| **Week 3 (Class Standard)** | Decision Tree (depth=5) | Median / Mode | 0.684 | 0.665 | +0.020 | 0.65 | 0.28 / 0.16[cite: 11] |
+| **Week 3 (KNN Imputer)** | Logistic Regression | KNN (k=5) / Mode | 0.671 | 0.652 | +0.018 | 0.64 | 0.28 / 0.16[cite: 12] |
+| **Week 3 (KNN Imputer)** | Decision Tree (depth=5) | KNN (k=5) / Mode | **0.685** | **0.683** | **+0.003** | **0.68** | 0.34 / 0.18[cite: 13] |
+
+#### Key Comparisons
+
+* **With vs. Without Preprocessing:** Week 2 test accuracy (0.681) was artificially inflated due to `dropna()` complete-case truncation, which discarded records with non-random missingness (MNAR) tied to `age_cat`. Evaluating on the full distribution of 7,214 cleaned records establishes a realistic, unbiased test accuracy baseline of 0.658 for Logistic Regression.
+* **Logistic Regression vs. Decision Tree:** Constraining Decision Tree depth to 5 resolved the overfitting observed in Week 2. Decision Trees outperformed Logistic Regression across all Week 3 runs by directly capturing non-linear interactions between offense count variables and target-encoded categoricals.
+* **Class Standard (Median) vs. KNN Imputation:**
+  * *Logistic Regression:* KNN imputation slightly decreased test accuracy (0.658 $\to$ 0.652) and Macro F1 (0.64 $\to$ 0.63) by introducing localized feature variance into linear coefficient estimation[cite: 10, 12].
+  * *Decision Tree:* KNN imputation produced the top pipeline performance, achieving 0.683 test accuracy, 0.68 Macro F1, and reducing the generalization gap to +0.003.
+
+
+
 
 ## Project structure
 
@@ -59,6 +88,7 @@ This table is updated after each practical class, so you can always see what cha
 | Week | Practical class focus | Added to the pipeline |
 |------|------------------------|------------------------|
 | 2 | Introduction & baseline pipeline | Initial version: project structure, a single naive train/test split (no cross-validation), minimal preprocessing (drop rows with missing values, one-hot encode categoricals), logistic regression baseline, a first (deliberately simple) fairness check comparing our model's and COMPAS's own false-positive rate by race, train-vs-test accuracy reporting (to start spotting overfitting), and each run's full report saved automatically to `results/` |
+| 3 | EDA & Leak-Safe Preprocessing | Besides the changes seen in class (statistical missingness tests, domain rule checks, duplicate filtering, and multicollinearity removal (`src/data_diagnostics.py`); a leak-safe `ColumnTransformer` with target encoding, scaling, MNAR indicators); I added `KNNImputer` (`src/preprocessing.py`). Decision Tree with KNN imputation achieved the highest accuracy (0.683). |
 
 ## Environment setup
 
