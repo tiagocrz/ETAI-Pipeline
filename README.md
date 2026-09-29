@@ -34,12 +34,12 @@ Test accuracy:  0.681
 
 ### Week 03:
 **Current best model:**
-Decision Tree[cite: 13]
+Decision Tree
 **Parameters:**
-  *criterion*: "gini"[cite: 13]
-  *splitter*: "best"[cite: 13]
-  *max_depth*: 5[cite: 13]
-  *imputer*: KNNImputer(n_neighbors=5)[cite: 13]
+  *criterion*: "gini"
+  *splitter*: "best"
+  *max_depth*: 5
+  *imputer*: KNNImputer(n_neighbors=5)
 
 #### Results Comparison
 
@@ -55,7 +55,7 @@ Decision Tree[cite: 13]
 * **With vs. Without Preprocessing:** Week 2 test accuracy (0.681) was artificially inflated due to `dropna()` complete-case truncation, which discarded records with non-random missingness (MNAR) tied to `age_cat`. Evaluating on the full distribution of 7,214 cleaned records establishes a realistic, unbiased test accuracy baseline of 0.658 for Logistic Regression.
 * **Logistic Regression vs. Decision Tree:** Constraining Decision Tree depth to 5 resolved the overfitting observed in Week 2. Decision Trees outperformed Logistic Regression across all Week 3 runs by directly capturing non-linear interactions between offense count variables and target-encoded categoricals.
 * **Class Standard (Median) vs. KNN Imputation:**
-  * *Logistic Regression:* KNN imputation slightly decreased test accuracy (0.658 $\to$ 0.652) and Macro F1 (0.64 $\to$ 0.63) by introducing localized feature variance into linear coefficient estimation[cite: 10, 12].
+  * *Logistic Regression:* KNN imputation slightly decreased test accuracy (0.658 $\to$ 0.652) and Macro F1 (0.64 $\to$ 0.63) by introducing localized feature variance into linear coefficient estimation.
   * *Decision Tree:* KNN imputation produced the top pipeline performance, achieving 0.683 test accuracy, 0.68 Macro F1, and reducing the generalization gap to +0.003.
 
 
