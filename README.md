@@ -89,6 +89,60 @@ This table is updated after each practical class, so you can always see what cha
 |------|------------------------|------------------------|
 | 2 | Introduction & baseline pipeline | Initial version: project structure, a single naive train/test split (no cross-validation), minimal preprocessing (drop rows with missing values, one-hot encode categoricals), logistic regression baseline, a first (deliberately simple) fairness check comparing our model's and COMPAS's own false-positive rate by race, train-vs-test accuracy reporting (to start spotting overfitting), and each run's full report saved automatically to `results/` |
 | 3 | EDA & Leak-Safe Preprocessing | Besides the changes seen in class (statistical missingness tests, domain rule checks, duplicate filtering, and multicollinearity removal (`src/data_diagnostics.py`); a leak-safe `ColumnTransformer` with target encoding, scaling, MNAR indicators); I added `KNNImputer` (`src/preprocessing.py`). Decision Tree with KNN imputation achieved the highest accuracy (0.683). |
+| 4 | Preprocessing inside the pipeline + cross-validation | Merged the class changes: locked 20% test set, stratified 5-fold CV of the whole pipeline (mean ± std and train–validation gap), cross-fitted `TargetEncoder` + robust scaling, `"nan"` placeholder fix, training-only de-duplication, dummy floor and random forest. *(Added late, 30 Oct 2026.)* |
+| 5 | Hyperparameter tuning without leakage | Merged the class changes: Optuna tuning (`src/tuning.py`), nested CV as the honest estimate, best-trial score shown as an optimism check -- see "Hyperparameter tuning" below. *(Added late, 30 Oct 2026; scored with the W7 pipeline, ROC-AUC.)* |
+| 6 | Ensembles: random forest, oblique random forest, AdaBoost | Merged the class changes: `oblique_random_forest` and `adaboost` in `src/model.py` with their search spaces, `corrected_paired_test()` -- see "Ensembles" below. *(Added late, 30 Oct 2026; scored with the W7 pipeline, ROC-AUC.)* |
+| 7 | Gradient boosting + evaluating with probabilities | Merged the class changes: `gradient_boosting`, `hist_gradient_boosting` and `naive_bayes`; 8 metrics with ROC-AUC as the selection metric; out-of-fold probabilities and confusion matrix; scoreboard in `results/runs.csv`. My addition: a search space for logistic regression (`C`, log scale), so every model except the dummy is tuned. Best: gradient boosting, nested CV ROC-AUC 0.728 ± 0.014. |
+
+## Model evaluation
+
+All runs: development set only (5,771 rows; the locked test set is never used), stratified 5-fold CV (seed 42), target encoding + robust scaling, median imputation, 30 Optuna trials. `class_weight: balanced` for logistic regression, decision tree, random forest and HistGradientBoosting.
+
+### Selection metric
+
+**ROC-AUC.** It measures how well the model ranks people by risk without fixing a 0.5 threshold, so it can be compared directly with COMPAS's own 1–10 score. Accuracy is misleading here: the dummy scores 0.549 accuracy by predicting that nobody reoffends, yet its ROC-AUC is 0.500.
+
+### Scoreboard (ROC-AUC, from `results/runs.csv`)
+
+| Model | Untuned: CV mean ± std | Tuned: nested CV mean ± std | Floor |
+|---|---|---|---|
+| Gradient boosting | 0.727 ± 0.015 | **0.728 ± 0.014** | 0.500 |
+| HistGradientBoosting | 0.717 ± 0.020 | 0.728 ± 0.015 | 0.500 |
+| Oblique random forest | 0.686 ± 0.018 | 0.727 ± 0.015 | 0.500 |
+| AdaBoost | 0.723 ± 0.016 | 0.727 ± 0.014 | 0.500 |
+| Random forest | 0.683 ± 0.018 | 0.726 ± 0.013 | 0.500 |
+| Logistic regression | 0.719 ± 0.014 | 0.718 ± 0.014 | 0.500 |
+| Decision tree | 0.605 ± 0.013 | 0.718 ± 0.015 | 0.500 |
+| Naive Bayes | 0.685 ± 0.011 | 0.705 ± 0.012 | 0.500 |
+| Dummy (floor) | 0.500 ± 0.000 | – | 0.500 |
+
+The top five models are within 0.002 of each other, well below the fold-to-fold std (~0.014), so no single one is clearly best.
+
+### Hyperparameter tuning
+
+With `tuning.enabled: true`, Optuna (seeded TPE sampler) runs 30 trials over each model's search space in `config.yaml` (`tuning.search_spaces`). Each trial is scored by 5-fold CV of the **whole** pipeline, so preprocessing is re-fit inside every fold. The honest estimate is **nested CV**: for each of the 5 outer folds, the whole study runs on the outer-training rows only, and the winner is scored on the outer fold it never saw. The final hyperparameters come from one more study on all development rows. No validation row ever influences its own score, and the test set stays locked, so nothing leaks.
+
+| Model | Default: CV mean ± std | Tuned: nested CV mean ± std | Tuning score (best trial) | Optimism | Chosen hyperparameters |
+|---|---|---|---|---|---|
+| Decision tree | 0.605 ± 0.013 | 0.718 ± 0.015 | 0.719 | 0.000 | `max_depth=9, min_samples_leaf=100, criterion=gini` |
+| Logistic regression | 0.719 ± 0.014 | 0.718 ± 0.014 | 0.719 | +0.001 | `C=0.0022` |
+| Random forest | 0.683 ± 0.018 | 0.726 ± 0.013 | 0.728 | 0.000 | `max_depth=9, min_samples_leaf=42, max_features=0.5` |
+
+*Optimism = mean inner best-trial score − nested CV score, as reported by the pipeline.*
+
+The tree models gained most from tuning: the decision tree by +0.113 and the random forest by +0.043, both far beyond the fold-to-fold std, mainly by curbing overfitting (train–validation gap +0.109 → +0.014 and +0.120 → +0.018). Logistic regression did not gain (0.719 → 0.718), because its default is already near its optimum. Tuning moved the random forest from second to first, although its lead over logistic regression (0.008) is smaller than the std. I report the nested CV score, not the best trial, because the best trial is the maximum of many noisy estimates.
+
+### Ensembles
+
+| Model | Default: CV mean ± std (gap) | Tuned: nested CV mean ± std (gap) | Tuning score (best trial) | Chosen hyperparameters |
+|---|---|---|---|---|
+| Logistic regression | 0.719 ± 0.014 (+0.002) | 0.718 ± 0.014 (+0.002) | 0.719 | `C=0.0022` |
+| Decision tree | 0.605 ± 0.013 (+0.109) | 0.718 ± 0.015 (+0.014) | 0.719 | `max_depth=9, min_samples_leaf=100, criterion=gini` |
+| Random forest | 0.683 ± 0.018 (+0.120) | 0.726 ± 0.013 (+0.018) | 0.728 | `max_depth=9, min_samples_leaf=42, max_features=0.5` |
+| Oblique random forest | 0.686 ± 0.018 (+0.149) | 0.727 ± 0.015 (+0.021) | 0.728 | `max_depth=13, min_samples_leaf=91, n_components=8` |
+| AdaBoost | 0.723 ± 0.016 (+0.005) | 0.727 ± 0.014 (+0.015) | 0.729 | `max_depth=4, n_estimators=55, learning_rate=0.167` |
+
+I would choose AdaBoost: it ties the forests (lead ≤ 0.001, far below the ~0.014 std) with 55 shallow trees instead of 200 deeper ones. The hyperparameters match how each model works. The forests keep fairly deep trees (depth 9–13), because averaging many trees cancels their variance. AdaBoost picks shallow trees (depth 4), because boosting reduces bias by adding weak learners in sequence, and deep trees would overfit the reweighted rows.
 
 ## Environment setup
 
