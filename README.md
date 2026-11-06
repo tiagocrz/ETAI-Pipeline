@@ -60,18 +60,18 @@ Decision Tree
 
 
 
-
 ## Project structure
 
 ```
 .
 ├── main.py                  # entry point: run the whole pipeline
+├── compare_runs.py          # compares two runs on the scoreboard with the corrected paired t-test (week 8)
 ├── config.yaml               # all tunable settings live here
 ├── requirements.txt
 ├── src/
 │   ├── data.py               # loading
 │   ├── preprocessing.py      # row-preserving cleaning (incl. domain-rule checks), training-only de-duplication, deployable preprocessing pipeline, and the split that locks the final test set away (week 4)
-│   ├── model.py               # model construction (incl. the oblique random forest and AdaBoost builders, week 6) + build_pipeline(): preprocessing + model as one estimator (week 5)
+│   ├── model.py               # model construction (incl. the oblique random forest and AdaBoost builders, week 6; XGBoost, week 8) + VoteSelector, the feature-selection step (week 8) + build_pipeline(): preprocessing + selection + model as one estimator (week 5)
 │   ├── evaluate.py           # stratified k-fold cross-validation, out-of-fold report + fairness check (week 4), corrected paired test to compare two models (week 6), several metrics and out-of-fold probabilities (week 7)
 │   ├── tuning.py             # hyperparameter tuning with Optuna + nested cross-validation (week 5)
 │   └── results.py            # saves each run's report to disk, and its scores to the runs table (week 7)
@@ -93,6 +93,7 @@ This table is updated after each practical class, so you can always see what cha
 | 5 | Hyperparameter tuning without leakage | Merged the class changes: Optuna tuning (`src/tuning.py`), nested CV as the honest estimate, best-trial score shown as an optimism check -- see "Hyperparameter tuning" below. *(Added late, 30 Oct 2026; scored with the W7 pipeline, ROC-AUC.)* |
 | 6 | Ensembles: random forest, oblique random forest, AdaBoost | Merged the class changes: `oblique_random_forest` and `adaboost` in `src/model.py` with their search spaces, `corrected_paired_test()` -- see "Ensembles" below. *(Added late, 30 Oct 2026; scored with the W7 pipeline, ROC-AUC.)* |
 | 7 | Gradient boosting + evaluating with probabilities | Merged the class changes: `gradient_boosting`, `hist_gradient_boosting` and `naive_bayes`; 8 metrics with ROC-AUC as the selection metric; out-of-fold probabilities and confusion matrix; scoreboard in `results/runs.csv`. My addition: a search space for logistic regression (`C`, log scale), so every model except the dummy is tuned. Best: gradient boosting, nested CV ROC-AUC 0.728 ± 0.014. |
+| 8 | XGBoost + feature selection | Merged the class changes: `xgboost` model (`XGBClassifier`) with its search space (incl. the new brakes `gamma`, `reg_alpha`, `min_child_weight`); feature selection as a learned Pipeline step (`VoteSelector`: a random forest, gradient boosting and an L1 logistic regression vote, features with ≥ `min_votes` votes are kept), re-fit in every fold, with `min_votes` tuned alongside the model and assessed by nested CV; cached preprocessing/selection during tuning; kept features printed; `feature_selection` column on the scoreboard. My addition: `compare_runs.py`, which lists the scoreboard and compares any two runs with the corrected paired t-test from the command line. Result: selection keeps 2 of 10 features with no significant loss -- see "Feature selection" below. |
 
 ## Model evaluation
 
@@ -106,17 +107,22 @@ All runs: development set only (5,771 rows; the locked test set is never used), 
 
 | Model | Untuned: CV mean ± std | Tuned: nested CV mean ± std | Floor |
 |---|---|---|---|
-| Gradient boosting | 0.727 ± 0.015 | **0.728 ± 0.014** | 0.500 |
+| XGBoost | 0.724 ± 0.017 | **0.729 ± 0.014** | 0.500 |
+| Gradient boosting | 0.727 ± 0.015 | 0.728 ± 0.014 | 0.500 |
 | HistGradientBoosting | 0.717 ± 0.020 | 0.728 ± 0.015 | 0.500 |
 | Oblique random forest | 0.686 ± 0.018 | 0.727 ± 0.015 | 0.500 |
 | AdaBoost | 0.723 ± 0.016 | 0.727 ± 0.014 | 0.500 |
 | Random forest | 0.683 ± 0.018 | 0.726 ± 0.013 | 0.500 |
+| XGBoost + feature selection | 0.721 ± 0.013 | 0.725 ± 0.012 | 0.500 |
 | Logistic regression | 0.719 ± 0.014 | 0.718 ± 0.014 | 0.500 |
 | Decision tree | 0.605 ± 0.013 | 0.718 ± 0.015 | 0.500 |
 | Naive Bayes | 0.685 ± 0.011 | 0.705 ± 0.012 | 0.500 |
 | Dummy (floor) | 0.500 ± 0.000 | – | 0.500 |
+ 
+The top six models are within 0.003 of each other, well below the fold-to-fold std (~0.014), so no single one is clearly best.
 
-The top five models are within 0.002 of each other, well below the fold-to-fold std (~0.014), so no single one is clearly best.
+**Comparing two runs.** `results/` isn't tracked in git, so the scoreboard (`results/runs.csv`) only exists locally, on the machine that ran the pipeline. `python compare_runs.py` lists the runs in it with their ids; `python compare_runs.py <idA> <idB>` compares two of them fold by fold with `corrected_paired_test()` (Nadeau & Bengio's corrected paired t-test), and only calls a winner when p < 0.05. Both runs must use the same data, metric and CV folds.
+
 
 ### Hyperparameter tuning
 
@@ -143,6 +149,24 @@ The tree models gained most from tuning: the decision tree by +0.113 and the ran
 | AdaBoost | 0.723 ± 0.016 (+0.005) | 0.727 ± 0.014 (+0.015) | 0.729 | `max_depth=4, n_estimators=55, learning_rate=0.167` |
 
 I would choose AdaBoost: it ties the forests (lead ≤ 0.001, far below the ~0.014 std) with 55 shallow trees instead of 200 deeper ones. The hyperparameters match how each model works. The forests keep fairly deep trees (depth 9–13), because averaging many trees cancels their variance. AdaBoost picks shallow trees (depth 4), because boosting reduces bias by adding weak learners in sequence, and deep trees would overfit the reweighted rows.
+
+
+### Feature selection
+
+XGBoost tuned twice (30 trials, nested CV), with and without the `VoteSelector` step; everything else identical.
+ 
+| Run | Untuned: CV mean ± std (gap) | Tuned: nested CV mean ± std (gap) | `min_votes` chosen | Features kept |
+|---|---|---|---|---|
+| XGBoost, no selection | 0.724 ± 0.017 (+0.034) | **0.729 ± 0.014** (+0.010) | – | all 10 |
+| XGBoost + selection | 0.721 ± 0.013 (+0.027) | 0.725 ± 0.012 (+0.005) | 1 (outer folds: 1, 3, 2, 3, 2) | 2: `age`, `priors_count` |
+ 
+*Untuned run with selection uses `min_votes: 2` from `config.yaml`.*
+ 
+**Corrected paired test** (`python compare_runs.py <idA> <idB>`, with A = the run with selection and B = the run without, same 5 folds): mean difference −0.0038, selection better in 2/5 folds, t = −1.14, p = 0.317 → no significant difference.
+ 
+The smaller model is as good: with only `age` and `priors_count`, XGBoost scores 0.725 against 0.729 with all 10 features, a difference smaller than the fold-to-fold std and not significant (p = 0.32). Selection also slightly narrows the train–validation gap (+0.005 vs +0.010). I would keep selection on: a model that uses two features is much easier to explain, and it drops `sex` and the juvenile counts at no measurable cost in ROC-AUC. The chosen `min_votes` varies across outer folds, so the exact threshold isn't stable, but age and prior offences clearly are relevant.
+
+
 
 ## Environment setup
 
@@ -196,6 +220,37 @@ That's it -- activate, then run.
 
 **When `requirements.txt` changes** (a week adds a package -- e.g. week 5 adds `optuna`), reinstall once, with the venv active: `pip install -r requirements.txt`. Otherwise `python main.py` fails with `ModuleNotFoundError`. If you don't see `(venv)` at the start of your prompt, the environment isn't active and `python main.py` may use the wrong Python (or fail to find a package) entirely.
 
+## Installing XGBoost
+
+`xgboost` is in `requirements.txt`, so `pip install -r requirements.txt` (venv active) installs it. On its own: `pip install xgboost`. Check it worked, with the venv active:
+```bash
+python -c "import xgboost; print(xgboost.__version__)"
+```
+
+**Windows:** nothing extra: `pip install xgboost` installs a ready-made version. If it fails to build or install, update pip first (`python -m pip install --upgrade pip`) and make sure your Python is 64-bit (`python -c "import struct; print(struct.calcsize('P') * 8)"` should print 64).
+
+**macOS:** XGBoost needs the **OpenMP** library (for running on several CPU cores), which macOS doesn't ship. If `import xgboost` fails with `XGBoostError`, `Library not loaded: libomp.dylib` or similar:
+1. install [Homebrew](https://brew.sh) if you don't have it (the command is on its home page);
+2. run `brew install libomp`;
+3. open a **new** terminal, activate the venv, and try the import again.
+
+Works on both Apple Silicon (M1/M2/M3/M4) and Intel Macs. If you use conda instead of a venv, `conda install -c conda-forge xgboost` installs XGBoost together with its OpenMP library.
+
+**Linux:** on most distributions `pip install xgboost` just works. Two things can go wrong:
+- it downloads a very large extra package (`nvidia-nccl-...`, a few hundred MB) for NVIDIA GPUs. If you have no NVIDIA GPU, or the download is too slow, install the CPU-only version instead: `pip install xgboost-cpu` (the code is identical: still `import xgboost`). If you do this, replace `xgboost` with `xgboost-cpu` in your copy of `requirements.txt`, so a reinstall doesn't fetch the large package again.
+- a very old distribution may have no ready-made version and try to compile it. Update pip first (`python -m pip install --upgrade pip`); recent releases need glibc 2.28 or newer (Ubuntu 20.04+, Debian 10+, Fedora 29+).
+
+**In a notebook (Jupyter / VS Code): `No module named 'xgboost'`, although you installed it.** The notebook runs on a different Python from the one `pip` installed into (e.g. you installed into the venv, but the notebook uses the system Python). Either:
+- install from inside the notebook, into the Python it actually uses: run `%pip install xgboost` in a cell, then **restart the kernel**; or
+- make your venv available as a kernel, once, with the venv active:
+  ```bash
+  pip install ipykernel
+  python -m ipykernel install --user --name etai --display-name "ETAI (venv)"
+  ```
+  then choose **ETAI (venv)** as the notebook's kernel. The notebook then sees every package in `requirements.txt`.
+
+To check which Python a notebook is using: `import sys; print(sys.executable)`. In the terminal: `which python` (macOS/Linux) or `where python` (Windows). They should point into the same `venv` folder.
+
 ## Environment Troubleshooting
 
 Two Windows issues come up often enough to note here -- if you hit either, this saves you re-diagnosing it from scratch.
@@ -224,7 +279,7 @@ This loads `config.yaml`, diagnoses and cleans the data (week 3), locks the fina
 - with tuning on, **Tuning**: the nested cross-validation score (the honest score of the tuned model) and the chosen hyperparameters
 - **All metrics**: mean ± std of every metric
 - **Scoreboard**: this run next to the earlier runs on the same data and metric, best first
-- the final model (refit on all development rows) and where the full report was saved
+- the final model (refit on all development rows), the features it keeps (with feature selection on) and where the full report was saved
 
 The full detail -- per-fold tables for every metric, the tuning report, the out-of-fold confusion matrix and classification report, the false-positive-rate-by-race comparison with COMPAS's own score -- goes to the results file.
 
