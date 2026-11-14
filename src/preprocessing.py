@@ -110,11 +110,12 @@ def split_features_target(df: pd.DataFrame, data_config: dict, mnar_indicator_so
 
 _SCALERS = {"none": "passthrough", "standard": StandardScaler, "minmax": MinMaxScaler, "robust": RobustScaler}
 # sklearn's TargetEncoder cross-fits: a training row's encoding never uses its own label.
+# target_type="auto": one column per category for a binary target, one per category per class otherwise.
 _ENCODERS = {
     "onehot": lambda seed: OneHotEncoder(handle_unknown="ignore", sparse_output=False),
     "ordinal": lambda seed: OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
     "count": lambda seed: CountEncoder(handle_unknown=0, handle_missing=0),
-    "target": lambda seed: TargetEncoder(target_type="binary", cv=StratifiedKFold(5, shuffle=True, random_state=seed)),
+    "target": lambda seed: TargetEncoder(target_type="auto", cv=StratifiedKFold(5, shuffle=True, random_state=seed)),
 }
 
 

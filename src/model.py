@@ -11,6 +11,7 @@ from sklearn.ensemble import (
 )
 from sklearn.feature_selection import SelectorMixin
 from sklearn.linear_model import LogisticRegression
+from sklearn.multiclass import OneVsRestClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.pipeline import Pipeline
 from sklearn.random_projection import SparseRandomProjection
@@ -75,6 +76,9 @@ class VoteSelector(SelectorMixin, BaseEstimator):
     Keeps the features chosen by at least `min_votes` of three models, fitted on the training
     rows only: a random forest and gradient boosting vote for features with above-average
     importance, an L1-penalised logistic regression for features it doesn't shrink to zero.
+    With more than two classes the L1 model has one row of coefficients per class (fitted one
+    class vs the rest, since liblinear is binary-only): a feature gets its vote if it is
+    non-zero for at least one class, i.e. it helps tell some class apart from the others.
     """
 
     def __init__(self, min_votes: int = 2, random_state=None):
@@ -84,10 +88,12 @@ class VoteSelector(SelectorMixin, BaseEstimator):
     def fit(self, X, y):
         forest = RandomForestClassifier(n_estimators=200, min_samples_leaf=20, random_state=self.random_state, n_jobs=-1).fit(X, y)
         booster = GradientBoostingClassifier(random_state=self.random_state).fit(X, y)
-        lasso = LogisticRegression(l1_ratio=1.0, C=0.01, solver="liblinear").fit(X, y)
+        lasso = LogisticRegression(l1_ratio=1.0, C=0.01, solver="liblinear")
+        coefs = (lasso.fit(X, y).coef_ if len(np.unique(y)) == 2                       # (1, n_features)
+                 else np.vstack([e.coef_ for e in OneVsRestClassifier(lasso).fit(X, y).estimators_]))  # (k, n_features)
         self.votes_ = ((forest.feature_importances_ > forest.feature_importances_.mean()).astype(int)
                        + (booster.feature_importances_ > booster.feature_importances_.mean())
-                       + (np.abs(lasso.coef_[0]) > 1e-8))
+                       + np.any(np.abs(coefs) > 1e-8, axis=0))
         self.support_ = self.votes_ >= self.min_votes
         return self
 

@@ -59,28 +59,6 @@ Decision Tree
   * *Decision Tree:* KNN imputation produced the top pipeline performance, achieving 0.683 test accuracy, 0.68 Macro F1, and reducing the generalization gap to +0.003.
 
 
-
-## Project structure
-
-```
-.
-├── main.py                  # entry point: run the whole pipeline
-├── compare_runs.py          # compares two runs on the scoreboard with the corrected paired t-test (week 8)
-├── config.yaml               # all tunable settings live here
-├── requirements.txt
-├── src/
-│   ├── data.py               # loading
-│   ├── preprocessing.py      # row-preserving cleaning (incl. domain-rule checks), training-only de-duplication, deployable preprocessing pipeline, and the split that locks the final test set away (week 4)
-│   ├── model.py               # model construction (incl. the oblique random forest and AdaBoost builders, week 6; XGBoost, week 8) + VoteSelector, the feature-selection step (week 8) + build_pipeline(): preprocessing + selection + model as one estimator (week 5)
-│   ├── evaluate.py           # stratified k-fold cross-validation, out-of-fold report + fairness check (week 4), corrected paired test to compare two models (week 6), several metrics and out-of-fold probabilities (week 7)
-│   ├── tuning.py             # hyperparameter tuning with Optuna + nested cross-validation (week 5)
-│   └── results.py            # saves each run's report to disk, and its scores to the runs table (week 7)
-├── results/                  # created automatically -- one report per run + runs.csv, the table of all runs (not tracked in git)
-└── data/
-    ├── compas_two_year_recidivism.csv
-    └── README.md              # problem description + full data dictionary
-```
-
 ## Pipeline progress
 
 This table is updated after each practical class, so you can always see what changed in the pipeline and why -- it's a running log, not a fixed syllabus.
@@ -94,6 +72,7 @@ This table is updated after each practical class, so you can always see what cha
 | 6 | Ensembles: random forest, oblique random forest, AdaBoost | Merged the class changes: `oblique_random_forest` and `adaboost` in `src/model.py` with their search spaces, `corrected_paired_test()` -- see "Ensembles" below. *(Added late, 30 Oct 2026; scored with the W7 pipeline, ROC-AUC.)* |
 | 7 | Gradient boosting + evaluating with probabilities | Merged the class changes: `gradient_boosting`, `hist_gradient_boosting` and `naive_bayes`; 8 metrics with ROC-AUC as the selection metric; out-of-fold probabilities and confusion matrix; scoreboard in `results/runs.csv`. My addition: a search space for logistic regression (`C`, log scale), so every model except the dummy is tuned. Best: gradient boosting, nested CV ROC-AUC 0.728 ± 0.014. |
 | 8 | XGBoost + feature selection | Merged the class changes: `xgboost` model (`XGBClassifier`) with its search space (incl. the new brakes `gamma`, `reg_alpha`, `min_child_weight`); feature selection as a learned Pipeline step (`VoteSelector`: a random forest, gradient boosting and an L1 logistic regression vote, features with ≥ `min_votes` votes are kept), re-fit in every fold, with `min_votes` tuned alongside the model and assessed by nested CV; cached preprocessing/selection during tuning; kept features printed; `feature_selection` column on the scoreboard. My addition: `compare_runs.py`, which lists the scoreboard and compares any two runs with the corrected paired t-test from the command line. Result: selection keeps 2 of 10 features with no significant loss -- see "Feature selection" below. |
+| 9 | Beyond COMPAS: multiclass target | Option B: predict COMPAS's own risk category `score_text` (Low / Medium / High) with its own config, `config_multiclass.yaml` (`python main.py config_multiclass.yaml`). Removed every binary-only assumption so that the same code runs both tasks (the binary run gives exactly the same results): labels mapped to 0..k-1, full probability matrix with argmax predictions, macro / one-vs-rest metrics, a k × k confusion matrix with per-class AUC, a multiclass target encoder, a one-vs-rest L1 voter in `VoteSelector`, a config path argument in `main.py` and `--config` in `compare_runs.py`. Result: logistic regression with mild class weights reaches all three targets (ROC-AUC OvR 0.761, accuracy 0.632, macro F1 0.548) -- see "Beyond COMPAS" below. |
 
 ## Model evaluation
 
@@ -166,6 +145,93 @@ XGBoost tuned twice (30 trials, nested CV), with and without the `VoteSelector` 
  
 The smaller model is as good: with only `age` and `priors_count`, XGBoost scores 0.725 against 0.729 with all 10 features, a difference smaller than the fold-to-fold std and not significant (p = 0.32). Selection also slightly narrows the train–validation gap (+0.005 vs +0.010). I would keep selection on: a model that uses two features is much easier to explain, and it drops `sex` and the juvenile counts at no measurable cost in ROC-AUC. The chosen `min_votes` varies across outer folds, so the exact threshold isn't stable, but age and prior offences clearly are relevant.
 
+
+
+## Beyond COMPAS
+
+Option B: same data, same cleaning, a new target. Instead of `two_year_recid`, the pipeline predicts **COMPAS's own risk category**, `score_text`: **Low** (54%), **Medium** (27%) or **High** (20%).
+
+### How to run it
+
+```bash
+python main.py config_multiclass.yaml     # the multiclass task
+python main.py                            # the binary task (config.yaml, unchanged)
+python compare_runs.py --config config_multiclass.yaml            # list the multiclass runs
+python compare_runs.py --config config_multiclass.yaml <idA> <idB>   # compare two of them
+```
+
+`config_multiclass.yaml` is a copy of `config.yaml` with these changes:
+- `target: score_text`, and `class_labels: [Low, Medium, High]`, which fixes the class order;
+- `decile_score` and `two_year_recid` are dropped from the features (see the table below);
+- the metrics are `accuracy`, `balanced_accuracy`, `precision_macro`, `recall_macro`, `f1_macro` and `roc_auc_ovr`, with `roc_auc_ovr` as the selection metric;
+- its own results go to `results/multiclass/` and `results/runs_multiclass.csv`, so they never mix with the binary scoreboard (both tasks read the same data file);
+- the model is logistic regression with mild class weights (see "Results").
+
+### What broke, why, and how it was fixed
+
+Every fix checks the number of classes: with 2 it follows the old binary path, so `python main.py` gives exactly the same results as before.
+
+| What broke | Why | Fix |
+|---|---|---|
+| Leaky features | `decile_score` is the same score as a number (1–10), so it gives the answer away. `two_year_recid` is measured two years **after** the score was given, so it wasn't known when the score was given. | Both are in `drop_columns` in `config_multiclass.yaml`. |
+| Text labels | XGBoost needs the labels to be 0, 1, 2, not `Low` / `Medium` / `High`. | `main.py` maps the target to 0..k-1 in the order of `data.class_labels` (the default is the sorted values, so binary 0/1 stays 0/1). |
+| Probabilities | `predict_proba(X)[:, 1]` kept one column; with 3 classes that is P(Medium) only. | The out-of-fold array keeps the whole (rows × classes) matrix in `cross_validate_pipeline()` and `nested_cross_validate()`. `predict_from_proba()` applies the 0.5 threshold with 2 classes and takes the most probable class (argmax) with more. |
+| Metrics | `precision`, `recall`, `f1` and `roc_auc` assume two classes. | The macro / one-vs-rest versions in the config (`get_scorer` already knows them, so `build_scorers` is unchanged). `fbeta_2` stays a binary-only metric. |
+| Out-of-fold report | The 2 × 2 confusion matrix had hard-coded `0` / `1` labels. | A k × k matrix and classification report labelled with the class names, plus each class's one-vs-rest ROC-AUC. |
+| Fairness report | The false positive rate needs one "positive" class, and its COMPAS comparison would compare COMPAS with itself (COMPAS's score is now the target). | Kept binary-only: skipped for the multiclass task, with a line in the report. With 3 classes the natural definition would be "people not truly High, but predicted High", per group. |
+| Target encoder | `TargetEncoder(target_type="binary")` crashes on 3 classes. | `target_type="auto"`: one column per category for a binary target, one per category **per class** otherwise (3 categorical features → 9 columns, 16 features in all). The target encoder stays on for both tasks. |
+| `VoteSelector` | The L1 voter read `lasso.coef_[0]`, but with 3 classes there is one row of coefficients per class (row 0 = Low only), and `liblinear` refuses 3 classes outright (sklearn 1.9). | With 3 classes the same L1 model is fitted one class vs the rest (`OneVsRestClassifier`). A feature gets the vote if it is non-zero for **at least one** class, i.e. it helps tell some class apart from the others. Binary keeps the direct fit. |
+| Config path | `main.py` always loaded `config.yaml`. | `python main.py [CONFIG]` (default `config.yaml`), and `compare_runs.py --config`. The report header now shows the config file, the target and the classes. |
+
+The class-imbalance setting needs care too: `class_weight` works for 3 classes, but XGBoost's `scale_pos_weight` (negatives / positives) is binary-only, so XGBoost runs here without any class weighting.
+
+### Results
+
+Development set only (5,771 rows; the locked test set is never used), stratified 5-fold CV, target encoding + robust scaling, 30 Optuna trials with nested CV for the tuned runs. Targets, all three in the same run: **ROC-AUC (OvR) ≥ 0.75, accuracy ≥ 0.63, macro F1 ≥ 0.53**.
+
+| Model | Class weights | Tuned | ROC-AUC (OvR) | Accuracy | Macro F1 | All 3 targets |
+|---|---|---|---|---|---|---|
+| Dummy (always Low) | – | no | 0.500 ± 0.000 | 0.540 ± 0.001 | 0.234 ± 0.000 | |
+| Logistic regression | balanced | no | 0.757 ± 0.008 | 0.594 ± 0.012 | 0.550 ± 0.009 | |
+| Logistic regression | balanced | yes | 0.757 ± 0.008 | 0.593 ± 0.014 | 0.550 ± 0.014 | |
+| Random forest | balanced | no | 0.724 ± 0.012 | 0.585 ± 0.011 | 0.527 ± 0.012 | |
+| Random forest | balanced | yes | 0.754 ± 0.009 | 0.598 ± 0.014 | 0.548 ± 0.013 | |
+| HistGradientBoosting | balanced | no | 0.727 ± 0.013 | 0.579 ± 0.008 | 0.527 ± 0.013 | |
+| HistGradientBoosting | balanced | yes | 0.755 ± 0.009 | 0.593 ± 0.010 | **0.553 ± 0.010** | |
+| XGBoost | none | no | 0.756 ± 0.011 | 0.625 ± 0.007 | 0.514 ± 0.011 | |
+| XGBoost | none | yes | **0.764 ± 0.009** | 0.629 ± 0.004 | 0.526 ± 0.010 | |
+| **Logistic regression** | **mild (1 : 1.3 : 1.5)** | no | 0.760 ± 0.008 | **0.635 ± 0.010** | 0.549 ± 0.013 | ✔ |
+| **Logistic regression** | **mild (1 : 1.3 : 1.5)** | yes | 0.761 ± 0.008 | 0.632 ± 0.008 | 0.548 ± 0.011 | ✔ (`python main.py config_multiclass.yaml`) |
+
+Every model clears the ROC-AUC target; the hard part is accuracy and macro F1 **together**. `balanced` weights raise macro F1 but drop accuracy to ~0.59, while no weights keep accuracy but rarely predict Medium. Mild weights (1 : 1.3 : 1.5) sit in between, and logistic regression with them reaches all three targets. The weights were picked on the same development folds, so the scores are slightly optimistic.
+
+Tuned XGBoost has the best ROC-AUC (significantly better than balanced logistic regression and tuned HistGradientBoosting, p < 0.02), but only by ~0.01. Plain logistic regression is almost as good.
+
+### Which class is hardest, and why?
+
+**Medium**, in every model: ROC-AUC 0.61–0.67 and F1 0.28–0.40, against ~0.80 AUC for Low and High. Age and prior offences push risk in one direction, so they separate the two ends well, but nothing points specifically to the middle. Medium overlaps with both neighbours and is a minority class, so uncertain cases fall back to Low (773 of 1,531 truly Medium people in the selected model).
+
+## Project structure
+
+```
+.
+├── main.py                  # entry point: run the whole pipeline
+├── compare_runs.py          # compares two runs on the scoreboard with the corrected paired t-test (week 8)
+├── config.yaml               # all tunable settings live here
+├── config_multiclass.yaml    # the same settings for the multiclass task (target: score_text) (week 9)
+├── requirements.txt
+├── src/
+│   ├── data.py               # loading
+│   ├── preprocessing.py      # row-preserving cleaning (incl. domain-rule checks), training-only de-duplication, deployable preprocessing pipeline, and the split that locks the final test set away (week 4)
+│   ├── model.py               # model construction (incl. the oblique random forest and AdaBoost builders, week 6; XGBoost, week 8) + VoteSelector, the feature-selection step (week 8) + build_pipeline(): preprocessing + selection + model as one estimator (week 5)
+│   ├── evaluate.py           # stratified k-fold cross-validation, out-of-fold report + fairness check (week 4), corrected paired test to compare two models (week 6), several metrics and out-of-fold probabilities (week 7)
+│   ├── tuning.py             # hyperparameter tuning with Optuna + nested cross-validation (week 5)
+│   └── results.py            # saves each run's report to disk, and its scores to the runs table (week 7)
+├── results/                  # created automatically -- one report per run + runs.csv, the table of all runs; multiclass runs in results/multiclass/ + runs_multiclass.csv (not tracked in git)
+└── data/
+    ├── compas_two_year_recidivism.csv
+    └── README.md              # problem description + full data dictionary
+```
 
 
 ## Environment setup
@@ -270,10 +336,11 @@ If it still doesn't stick (common on locked-down school/lab machines with a Grou
 With the environment active (see above), from the project's root
 folder, on any OS:
 ```bash
-python main.py
+python main.py                            # binary task: config.yaml
+python main.py config_multiclass.yaml     # multiclass task (week 9 -- see "Beyond COMPAS" above)
 ```
 
-This loads `config.yaml`, diagnoses and cleans the data (week 3), locks the final test set away, cross-validates preprocessing + model on the development set (week 4), tunes the model's hyperparameters if `tuning.enabled` is on (week 5 -- see "Hyperparameter tuning" above; minutes, not seconds, for the ensembles), and prints, in order:
+This loads `config.yaml` (or the config you pass), diagnoses and cleans the data (week 3), locks the final test set away, cross-validates preprocessing + model on the development set (week 4), tunes the model's hyperparameters if `tuning.enabled` is on (week 5 -- see "Hyperparameter tuning" above; minutes, not seconds, for the ensembles), and prints, in order:
 - the model, the selection metric and the CV design; the size of the development set and of the locked test set (which is **not** used)
 - **Default hyperparameters**: the cross-validation score on the selection metric, the train-validation gap (how much better the model looks on rows it trained on: a large gap means it memorised) and the no-model floor
 - with tuning on, **Tuning**: the nested cross-validation score (the honest score of the tuned model) and the chosen hyperparameters
@@ -289,22 +356,6 @@ pipeline, and isn't tracked in git (see `.gitignore`) since it's
 generated output, not source.
 
 You're free to improve on this structure or restructure it entirely -- what matters is that your project stays runnable end-to-end with a single command, and that each piece (data, preprocessing, model, evaluation) stays easy to find and change independently.
-
-## Push to GitHub via Terminal
-
-Standard workflow, from the project's root folder, with the venv active:
-```bash
-git add .
-git commit -m "short description of what changed"
-git push
-```
-
-**If `git push` asks for a password and rejects your normal GitHub password:** GitHub no longer accepts account passwords for git over HTTPS -- you need a **Personal Access Token (PAT)** instead.
-1. On GitHub: **Settings -> Developer settings -> Personal access tokens -> Tokens (classic)** -> **Generate new token**, with at least `repo` scope.
-2. When `git push` prompts for a password, paste the token instead (username stays your GitHub username).
-3. So you're not asked every time: `git config --global credential.helper manager` (Windows, usually already set up by Git for Windows) or `git config --global credential.helper store` (caches it in plaintext -- fine on a personal machine, not a shared one).
-
-Alternative: set up an SSH key once (`ssh-keygen -t ed25519`, then add the public key under **GitHub -> Settings -> SSH and GPG keys**) and use the repo's SSH remote URL (`git@github.com:...`) instead of HTTPS -- no token to manage or renew.
 
 ## Dataset
 

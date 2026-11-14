@@ -54,11 +54,12 @@ def nested_cross_validate(pipeline, X, y, outer_cv, inner_cv, scorers: dict, sel
     rows (`tune_pipeline` with `inner_cv`, on `selection_metric`), refit the best pipeline on
     them, and score it on the outer-validation rows, which took no part in the tuning.
 
-    Returns (fold_scores, oof_proba), as `cross_validate_pipeline` does, with two extra kinds
+    Returns (fold_scores, oof_proba), as `cross_validate_pipeline` does (oof_proba has shape
+    (n_rows, n_classes)), with two extra kinds
     of columns: `inner_best` (the tuning score inside that fold) and the hyperparameters chosen.
     """
     rows = []
-    oof_proba = np.empty(len(X))
+    oof_proba = np.empty((len(X), y.nunique()))
     for fold, (train_idx, val_idx) in enumerate(outer_cv.split(X, y), start=1):
         X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
         X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
@@ -69,7 +70,7 @@ def nested_cross_validate(pipeline, X, y, outer_cv, inner_cv, scorers: dict, sel
 
         train_score = scorers[selection_metric](best_pipeline, X_train, y_train)
         val_scores = {name: scorer(best_pipeline, X_val, y_val) for name, scorer in scorers.items()}
-        oof_proba[val_idx] = best_pipeline.predict_proba(X_val)[:, 1]
+        oof_proba[val_idx] = best_pipeline.predict_proba(X_val)
         rows.append({"fold": fold, "train": train_score, "validation": val_scores[selection_metric],
                      "gap": train_score - val_scores[selection_metric], **val_scores,
                      "inner_best": study.best_value, **study.best_params})

@@ -1,12 +1,14 @@
 """
-Entry point: `python main.py`.
+Entry point: `python main.py [CONFIG]` (default `config.yaml`; e.g. `config_multiclass.yaml`).
 
 load config -> load and clean data -> drop duplicate rows (training only) -> features/target
+-> encode the target labels as 0..k-1
 -> lock the test set -> cross-validate the pipeline (preprocessing, feature selection if enabled,
 model) on the development set (several metrics, and the no-model floor on the same folds)
 -> [if tuning is enabled: nested CV of the tuning procedure, then tuning on all development rows]
 -> out-of-fold reports -> refit on all development rows -> scoreboard + full report
 """
+import argparse
 import shutil
 import tempfile
 from datetime import datetime
@@ -29,8 +31,8 @@ def load_config(path: str = "config.yaml") -> dict:
         return yaml.safe_load(f)
 
 
-def main():
-    config = load_config()
+def main(config_path: str = "config.yaml"):
+    config = load_config(config_path)
     run = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_type = config["model"]["type"]
 
@@ -40,6 +42,16 @@ def main():
 
     mnar_sources = config["preprocessing"].get("mnar_indicator_sources", [])
     X, y, extras = split_features_target(df_clean, config["data"], mnar_sources)
+
+    # Labels -> 0..k-1 in the order of data.class_labels (default: sorted). Binary 0/1 maps to itself;
+    # XGBoost needs this for text labels. The integers are only names: the classes stay unordered.
+    class_labels = config["data"].get("class_labels") or sorted(y.unique())
+    unknown = set(y.unique()) - set(class_labels)
+    if unknown:
+        raise ValueError(f"Target values not in data.class_labels {class_labels}: {sorted(map(str, unknown))}")
+    y = y.map({label: i for i, label in enumerate(class_labels)}).astype(int)
+    class_names = [str(label) for label in class_labels]
+    binary = len(class_labels) == 2
 
     # From here on, every decision uses the development set only; the test set stays locked.
     X_dev, X_test, y_dev, y_test, extras_dev, extras_test = split_dev_test(
@@ -57,6 +69,7 @@ def main():
     n_jobs = cv_config.get("n_jobs", 1)
     selection_config = config.get("feature_selection") or {}
     selection_enabled = selection_config.get("enabled", False)
+    print(f"Config: {config_path}   |   target: {config['data']['target']}   |   classes: {', '.join(class_names)}")
     print(f"Model: {model_type}   |   selection metric: {selection_metric}   |   "
           f"{cv_config['n_splits']}-fold CV   |   feature selection: "
           f"{'min_votes ' + str(selection_config.get('min_votes', 2)) if selection_enabled else 'off'}")
@@ -70,10 +83,10 @@ def main():
     fold_scores, oof_proba = cross_validate_pipeline(pipeline, X_dev, y_dev, cv, scorers, selection_metric, n_jobs)
     floor, untuned = floor_scores["validation"].mean(), fold_scores["validation"].mean()
 
-    print("\nDefault hyperparameters (config.yaml)")
+    print(f"\nDefault hyperparameters ({config_path})")
     print(f"  {selection_metric}: {untuned:.3f} ± {fold_scores['validation'].std(ddof=1):.3f}   "
           f"train-validation gap: {fold_scores['gap'].mean():+.3f}   no-model floor: {floor:.3f}")
-    report = (f"Hyperparameters from config.yaml: {config['model'].get('params')}\n\n"
+    report = (f"Hyperparameters from {config_path}: {config['model'].get('params')}\n\n"
               + cv_report(fold_scores, metrics, selection_metric, "Cross-validation")
               + f"\n\nNo-model floor (dummy, same folds): {selection_metric} = {floor:.3f}")
     final_scores = fold_scores
@@ -83,7 +96,7 @@ def main():
     if tuning_enabled:
         search_spaces = tuning_config.get("search_spaces") or {}
         if model_type not in search_spaces:
-            raise ValueError(f"tuning is enabled but config.yaml has no tuning.search_spaces for "
+            raise ValueError(f"tuning is enabled but {config_path} has no tuning.search_spaces for "
                              f"'{model_type}'. Add one, or set tuning.enabled: false.")
         search_space = dict(search_spaces[model_type])
         if selection_enabled:
@@ -116,8 +129,11 @@ def main():
     print(f"\nAll metrics ({'tuned model' if tuning_enabled else 'default hyperparameters'}, mean ± std)")
     for name in metrics:
         print(f"  {name:<18s} {final_scores[name].mean():.3f} ± {final_scores[name].std(ddof=1):.3f}")
-    report += "\n\n" + oof_classification_report(y_dev, oof_proba)
-    report += "\n" + fairness_report(y_dev, oof_proba, extras_dev, sensitive_attr=config["data"]["sensitive_attr"])
+    report += "\n\n" + oof_classification_report(y_dev, oof_proba, class_names)
+    if binary:
+        report += "\n" + fairness_report(y_dev, oof_proba, extras_dev, sensitive_attr=config["data"]["sensitive_attr"])
+    else:
+        report += "\nFairness report: skipped (the false-positive-rate check is defined for binary targets only).\n"
 
     pipeline.fit(X_dev, y_dev)
     refit = f"Final model: {model_type} refit on all {len(X_dev)} development rows."
@@ -144,9 +160,11 @@ def main():
     report += f"\nScoreboard:\n{board}\n"
 
     shutil.rmtree(cache_dir, ignore_errors=True)
-    path = save_run(config.get("output", {}).get("results_dir", "results"), run, config, report)
+    path = save_run(config.get("output", {}).get("results_dir", "results"), run, config, report, config_path)
     print(f"\n{refit}\nFull report (per-fold tables, tuning, confusion matrix, fairness): {path}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Cross-validate (and optionally tune) the pipeline.")
+    parser.add_argument("config", nargs="?", default="config.yaml", help="YAML config (default: config.yaml)")
+    main(parser.parse_args().config)
