@@ -92,7 +92,7 @@ feature_selection:
     select__min_votes: {type: int, low: 1, high: 3}
 
 tuning:
-  enabled: true
+  enabled: false
   n_trials: 30
   n_splits: 5                                       # folds that score each candidate
   random_state: 42                                  # seeds the sampler and those folds

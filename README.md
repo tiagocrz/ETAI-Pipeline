@@ -73,6 +73,7 @@ This table is updated after each practical class, so you can always see what cha
 | 7 | Gradient boosting + evaluating with probabilities | Merged the class changes: `gradient_boosting`, `hist_gradient_boosting` and `naive_bayes`; 8 metrics with ROC-AUC as the selection metric; out-of-fold probabilities and confusion matrix; scoreboard in `results/runs.csv`. My addition: a search space for logistic regression (`C`, log scale), so every model except the dummy is tuned. Best: gradient boosting, nested CV ROC-AUC 0.728 ± 0.014. |
 | 8 | XGBoost + feature selection | Merged the class changes: `xgboost` model (`XGBClassifier`) with its search space (incl. the new brakes `gamma`, `reg_alpha`, `min_child_weight`); feature selection as a learned Pipeline step (`VoteSelector`: a random forest, gradient boosting and an L1 logistic regression vote, features with ≥ `min_votes` votes are kept), re-fit in every fold, with `min_votes` tuned alongside the model and assessed by nested CV; cached preprocessing/selection during tuning; kept features printed; `feature_selection` column on the scoreboard. My addition: `compare_runs.py`, which lists the scoreboard and compares any two runs with the corrected paired t-test from the command line. Result: selection keeps 2 of 10 features with no significant loss -- see "Feature selection" below. |
 | 9 | Beyond COMPAS: multiclass target | Option B: predict COMPAS's own risk category `score_text` (Low / Medium / High) with its own config, `config_multiclass.yaml` (`python main.py config_multiclass.yaml`). Removed every binary-only assumption so that the same code runs both tasks (the binary run gives exactly the same results): labels mapped to 0..k-1, full probability matrix with argmax predictions, macro / one-vs-rest metrics, a k × k confusion matrix with per-class AUC, a multiclass target encoder, a one-vs-rest L1 voter in `VoteSelector`, a config path argument in `main.py` and `--config` in `compare_runs.py`. Result: logistic regression with mild class weights reaches all three targets (ROC-AUC OvR 0.761, accuracy 0.632, macro F1 0.548) -- see "Beyond COMPAS" below. |
+| 10 | Missing values + a deployable pipeline | Merged the class changes: the numeric imputer is a setting (`preprocessing.imputation.numeric_strategy`: `median`, `mean`, `knn`, `iterative` (MICE), `random_forest` (missForest)), fitted inside the Pipeline after scaling and recorded on the scoreboard; `main.py` saves the final fitted pipeline to `models/model.joblib` (`output.model_path`, not tracked in git); new `predict.py` predicts a new CSV with it (`data/compas_new_people.csv`). Result: the four imputers tie (all with p ≥ 0.38), so I keep median -- see "Missing values" and "Predicting new data" below. |
 
 ## Model evaluation
 
@@ -146,6 +147,20 @@ XGBoost tuned twice (30 trials, nested CV), with and without the `VoteSelector` 
 The smaller model is as good: with only `age` and `priors_count`, XGBoost scores 0.725 against 0.729 with all 10 features, a difference smaller than the fold-to-fold std and not significant (p = 0.32). Selection also slightly narrows the train–validation gap (+0.005 vs +0.010). I would keep selection on: a model that uses two features is much easier to explain, and it drops `sex` and the juvenile counts at no measurable cost in ROC-AUC. The chosen `min_votes` varies across outer folds, so the exact threshold isn't stable, but age and prior offences clearly are relevant.
 
 
+### Missing values
+
+About 10% of rows have a missing numeric value (raw data: `priors_count` 420, `juv_fel_count` 217, `age` 146). XGBoost with fixed hyperparameters (tuning and feature selection off), same 5 folds, only the numeric imputer changed:
+
+| Imputer | CV ROC-AUC (mean ± std) | Difference vs median | Folds median wins | p (corrected test) |
+|---|---|---|---|---|
+| Median | **0.724 ± 0.017** | – | – | – |
+| KNN (k = 5) | 0.725 ± 0.015 | +0.0010 | 2/5 | 0.658 |
+| Iterative (MICE) | 0.724 ± 0.018 | −0.0002 | 3/5 | 0.933 |
+| Random forest (missForest) | 0.723 ± 0.016 | −0.0010 | 4/5 | 0.385 |
+
+*Corrected paired test: `python compare_runs.py <idA> <idB>`, with A = the median run and B = each other imputer.*
+
+I keep **median**: the four imputers are within 0.002 of each other and none differs significantly from median, so the cheapest and simplest one wins. The model-based imputers give little to no gain in this data.
 
 ## Beyond COMPAS
 
@@ -223,7 +238,7 @@ Tuned XGBoost has the best ROC-AUC (significantly better than balanced logistic 
 ├── requirements.txt
 ├── src/
 │   ├── data.py               # loading
-│   ├── preprocessing.py      # row-preserving cleaning (incl. domain-rule checks), training-only de-duplication, deployable preprocessing pipeline, and the split that locks the final test set away (week 4)
+│   ├── preprocessing.py      # row-preserving cleaning (incl. domain-rule checks), training-only de-duplication, deployable preprocessing pipeline, and the split that locks the final test set away (week 4); the numeric imputer as a setting (week 10)
 │   ├── model.py               # model construction (incl. the oblique random forest and AdaBoost builders, week 6; XGBoost, week 8) + VoteSelector, the feature-selection step (week 8) + build_pipeline(): preprocessing + selection + model as one estimator (week 5)
 │   ├── evaluate.py           # stratified k-fold cross-validation, out-of-fold report + fairness check (week 4), corrected paired test to compare two models (week 6), several metrics and out-of-fold probabilities (week 7)
 │   ├── tuning.py             # hyperparameter tuning with Optuna + nested cross-validation (week 5)
@@ -359,6 +374,24 @@ pipeline, and isn't tracked in git (see `.gitignore`) since it's
 generated output, not source.
 
 You're free to improve on this structure or restructure it entirely -- what matters is that your project stays runnable end-to-end with a single command, and that each piece (data, preprocessing, model, evaluation) stays easy to find and change independently.
+
+## Predicting new data
+
+`python main.py` saves the final pipeline (preprocessing, imputation and model, refit on all development rows) to `models/model.joblib`. Each run overwrites it, so the last run is the deployed model. To predict a new CSV with the same columns as the training data (no target needed), with the venv active:
+
+```bash
+python predict.py data/compas_new_people.csv predictions.csv
+```
+
+It applies the same cleaning as training (no rows dropped), runs the saved pipeline and writes one row per person to `predictions.csv` (not tracked in git):
+
+| Column | Meaning |
+|---|---|
+| `id` | the person's id, from the input file |
+| `probability` | predicted probability of reoffending within two years |
+| `prediction` | 1 if `probability` ≥ 0.5, otherwise 0 |
+
+On the 20 people in `data/compas_new_people.csv` (deployed model: XGBoost with the median imputer), 7 are predicted to reoffend, with probabilities from 0.13 to 0.90 -- highest for young people with many prior offences. The file includes deliberately messy rows (`"?"` and empty values, `"Felony"`, `"MALE"`, a charge degree `"X"` never seen in training, two identical rows): each is cleaned or imputed with what the pipeline learned in training, and every row gets a prediction. The 0.5 threshold is a choice, not a fact: person 900008 (0.501) and person 900001 (0.487) have almost the same risk but opposite labels, so the probability is the more informative output.
 
 ## Dataset
 
