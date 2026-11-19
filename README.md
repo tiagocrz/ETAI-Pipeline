@@ -215,7 +215,8 @@ Tuned XGBoost has the best ROC-AUC (significantly better than balanced logistic 
 
 ```
 .
-├── main.py                  # entry point: run the whole pipeline
+├── main.py                  # entry point: train, evaluate and save the model
+├── predict.py               # entry point: predict a new CSV with the saved model (week 10)
 ├── compare_runs.py          # compares two runs on the scoreboard with the corrected paired t-test (week 8)
 ├── config.yaml               # all tunable settings live here
 ├── config_multiclass.yaml    # the same settings for the multiclass task (target: score_text) (week 9)
@@ -228,8 +229,10 @@ Tuned XGBoost has the best ROC-AUC (significantly better than balanced logistic 
 │   ├── tuning.py             # hyperparameter tuning with Optuna + nested cross-validation (week 5)
 │   └── results.py            # saves each run's report to disk, and its scores to the runs table (week 7)
 ├── results/                  # created automatically -- one report per run + runs.csv, the table of all runs; multiclass runs in results/multiclass/ + runs_multiclass.csv (not tracked in git)
+├── models/                   # created automatically -- model.joblib, the final fitted pipeline (not tracked in git)
 └── data/
     ├── compas_two_year_recidivism.csv
+    ├── compas_new_people.csv  # 20 people without the target, to try predict.py
     └── README.md              # problem description + full data dictionary
 ```
 
@@ -346,7 +349,7 @@ This loads `config.yaml` (or the config you pass), diagnoses and cleans the data
 - with tuning on, **Tuning**: the nested cross-validation score (the honest score of the tuned model) and the chosen hyperparameters
 - **All metrics**: mean ± std of every metric
 - **Scoreboard**: this run next to the earlier runs on the same data and metric, best first
-- the final model (refit on all development rows), the features it keeps (with feature selection on) and where the full report was saved
+- the final model (refit on all development rows), the features it keeps (with feature selection on), where the full report was saved and where the model was saved for `predict.py`
 
 The full detail -- per-fold tables for every metric, the tuning report, the out-of-fold confusion matrix and classification report, the false-positive-rate-by-race comparison with COMPAS's own score -- goes to the results file.
 
